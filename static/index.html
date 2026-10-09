@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>KOC 数据记录</title><link rel="stylesheet" href="/style.css"><script defer src="/app.js"></script></head>
+<body><main>
+<header><div><span class="badge">KOC 数据助手 · 手动录入</span><h1>把作品数据，整理在一起。</h1><p>记录抖音与小红书的表现，保存后随时查看、导出。</p></div><a class="button secondary" href="/api/export">导出全部 CSV</a></header>
+<section class="summary" id="summary" aria-label="数据概览"></section>
+<div class="layout"><section class="card"><h2 id="form-title">添加作品</h2><p class="hint">没有显示的数量请留空；0 表示确实为零。</p>
+<form id="record-form"><label>平台<select name="platform"><option value="douyin">抖音</option><option value="xiaohongshu">小红书</option></select></label>
+<label>作品链接 <span>*</span><input name="url" type="url" required placeholder="https://…"></label>
+<label>作品标题<input name="title" maxlength="2000" placeholder="方便之后查找"></label><label>作者<input name="author" maxlength="2000" placeholder="博主昵称"></label>
+<div class="metrics"><label>点赞数<input name="likes" type="number" min="0" max="9007199254740991" step="1" placeholder="未知"></label><label>评论数<input name="comments" type="number" min="0" max="9007199254740991" step="1" placeholder="未知"></label><label>收藏数<input name="favorites" type="number" min="0" max="9007199254740991" step="1" placeholder="未知"></label><label>转发数<input name="shares" type="number" min="0" max="9007199254740991" step="1" placeholder="未知"></label></div>
+<label>备注<textarea name="notes" maxlength="2000" rows="2" placeholder="例如：发布后第 3 天的数据"></textarea></label>
+<div class="actions"><button id="save" type="submit">保存记录</button><button id="cancel" class="secondary" type="button" hidden>取消编辑</button></div></form></section>
+<section class="card records"><div class="list-heading"><h2>作品记录</h2><span id="count"></span></div><div class="filters"><input id="search" type="search" placeholder="搜索标题、作者或链接" aria-label="搜索记录"><select id="platform-filter" aria-label="筛选平台"><option value="">全部平台</option><option value="douyin">抖音</option><option value="xiaohongshu">小红书</option></select></div><div id="records"></div></section></div>
+<p id="status" role="status" aria-live="polite"></p><footer>数据保存在运行此工具的机器上。建议定期导出备份。记录时间按你所在时区显示。</footer>
+</main></body></html>
