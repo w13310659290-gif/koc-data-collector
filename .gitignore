@@ -2,3 +2,7 @@ __pycache__/
 *.pyc
 .data/
 .env
+.venv/
+.local-browser/
+reports/
+.collector.lock
