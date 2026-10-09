@@ -78,6 +78,8 @@ class BrowserCollector:
         self.blocked = set()
         self.cache = {}
         self.aliases = {}
+        self.login_prepared = set()
+        self.login_skipped = set()
 
     def __enter__(self):
         from playwright.sync_api import sync_playwright
@@ -95,9 +97,40 @@ class BrowserCollector:
         self.context.close()
         self.engine.stop()
 
+    def prepare_xhs_login(self):
+        """Human login in the same browser context used for collection."""
+        platform = 'xiaohongshu'
+        if platform in self.login_prepared:
+            return True
+        if platform in self.login_skipped or self.stop.is_set():
+            return False
+        page = self.context.new_page()
+        try:
+            page.goto('https://www.xiaohongshu.com/explore', wait_until='domcontentloaded', timeout=30000)
+            page.bring_to_front()
+            confirmed = self.prompt('先登录小红书',
+                '已打开本工具专用的 Edge 小红书页面。\n'
+                '请在该页面点击“登录”，用手机扫码或网站安全表单完成登录。\n'
+                '如果已经登录，确认页面显示的是你的账号。\n'
+                '完成后回到此提示框，点击“确定”才开始读取作品；取消则跳过本次小红书采集。\n'
+                '不要在其他普通 Edge 窗口登录，不要发送密码、验证码或 Cookie。')
+            if confirmed and not self.stop.is_set():
+                self.login_prepared.add(platform)
+                return True
+            self.login_skipped.add(platform)
+            return False
+        except Exception:
+            self.log('小红书登录页面打开失败，本次保留原值。')
+            self.login_skipped.add(platform)
+            return False
+        finally:
+            page.close()
+
     def resolve(self, url, platform):
         if self.stop.is_set():
             raise RuntimeError('用户已停止运行')
+        if platform == 'xiaohongshu' and not self.prepare_xhs_login():
+            return Observation(platform, url, outcome='需要登录', notes=['小红书预登录未完成，本次未读取作品'])
         known = work_id(url, platform)
         if platform in self.blocked:
             return Observation(platform, url, outcome='访问受限', notes=['本网站已出现自动化限制，本次不再访问'])
