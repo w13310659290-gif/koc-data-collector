@@ -84,6 +84,16 @@ class FeishuTests(unittest.TestCase):
             with self.assertRaises(FeishuError):
                 client.verified_write(TABLE, 'rec1', {'点赞数': 3})
 
+    def test_numeric_readback_strings_are_exact(self):
+        client = FakeFeishu()
+        for actual in ('3', '3.0', 3.0):
+            with patch.object(client, 'get_record', return_value={'fields': {'点赞数': actual}}):
+                client.verified_write(TABLE, 'rec1', {'点赞数': 3})
+        for actual in ('4', '', None, True, 'NaN', 'Infinity', ['3']):
+            with patch.object(client, 'get_record', return_value={'fields': {'点赞数': actual}}):
+                with self.assertRaises(FeishuError):
+                    client.verified_write(TABLE, 'rec1', {'点赞数': 3})
+
     def test_daily_upsert_and_cross_day_history(self):
         client = FakeFeishu()
         rows = []

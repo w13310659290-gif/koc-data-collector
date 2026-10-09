@@ -1,6 +1,7 @@
 """Official Feishu Open API. Secrets stay in memory, never in reports."""
 import json
 import time
+from decimal import Decimal, InvalidOperation
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, quote
 from urllib.request import Request, urlopen
@@ -17,6 +18,17 @@ HISTORY_FIELDS = {'平台': 1, '来源记录ID': 1, '账号': 1, '作品ID': 1, 
 
 class FeishuError(RuntimeError):
     pass
+
+
+def same_number(actual, expected):
+    """Record GET may serialize number cells as decimal strings."""
+    if isinstance(actual, bool) or not isinstance(actual, (str, int, float)):
+        return False
+    try:
+        number = Decimal(str(actual))
+        return number.is_finite() and number == Decimal(str(expected))
+    except InvalidOperation:
+        return False
 
 
 class Feishu:
@@ -153,9 +165,16 @@ class Feishu:
             elif value is None:
                 ok = actual is None or actual == [] or actual == ''
             else:
-                ok = actual == value
+                ok = same_number(actual, value)
             if not ok:
-                raise FeishuError('回读核对失败：' + key + '，请检查记录 ' + record_id)
+                detail = ''
+                if isinstance(value, (int, float)):
+                    # Only public numeric cells; never log text, URLs or credentials.
+                    detail = '（返回类型：' + type(actual).__name__
+                    if isinstance(actual, (int, float)) or (isinstance(actual, str) and len(actual) < 32 and all(c in '0123456789.+-eE ' for c in actual)):
+                        detail += '，返回值：' + str(actual) + '，预期：' + str(value)
+                    detail += '）'
+                raise FeishuError('回读核对失败：' + key + detail + '，请检查记录 ' + record_id)
         return record_id
 
     def write_source(self, source, observation):
