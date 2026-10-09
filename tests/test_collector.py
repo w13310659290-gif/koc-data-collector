@@ -30,11 +30,13 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(source_link([{'type': 'url', 'text': 'https://v.douyin.com/a/'}]), 'https://v.douyin.com/a/')
 
     def test_beijing_midnight_and_missing_identity(self):
-        obs = Observation('douyin', 'https://douyin.com/video/1', work_id='1', account='author', captured_at='2026-10-09T16:01:00+00:00')
-        self.assertEqual(obs.daily_key, ('douyin', 'author', '1', '2026-10-10'))
+        obs = Observation('douyin', 'https://douyin.com/video/1', source_record_id='rec1', captured_at='2026-10-09T16:01:00+00:00')
+        self.assertEqual(obs.daily_key, ('douyin', 'rec1', '2026-10-10'))
         obs.account = None
+        self.assertEqual(obs.daily_key, ('douyin', 'rec1', '2026-10-10'))
+        self.assertNotIn('作品ID或账号未确认', obs.status)
+        obs.source_record_id = None
         self.assertIsNone(obs.daily_key)
-        self.assertIn('未确认', obs.status)
 
 
 class FakeFeishu(Feishu):
@@ -86,7 +88,7 @@ class FeishuTests(unittest.TestCase):
         client = FakeFeishu()
         rows = []
         obs = Observation('douyin', 'https://www.douyin.com/video/123', work_id='123', account='author',
-                          values={'likes': 10}, captured_at='2026-10-09T08:00:00+08:00')
+                          source_record_id='rec1', values={'likes': 10}, captured_at='2026-10-09T08:00:00+08:00')
         client.write_history('history', obs, [obs.original_url], rows)
         self.assertEqual(len(rows), 1)
         obs.values['likes'] = 11
@@ -101,8 +103,8 @@ class FeishuTests(unittest.TestCase):
 
     def test_duplicate_daily_keys_do_not_overwrite(self):
         client = FakeFeishu()
-        obs = Observation('douyin', 'https://www.douyin.com/video/123', work_id='123', account='author')
-        fields = dict(zip(('平台', '账号', '作品ID', '采集日期'), obs.daily_key))
+        obs = Observation('douyin', 'https://www.douyin.com/video/123', source_record_id='rec1')
+        fields = dict(zip(('平台', '来源记录ID', '采集日期'), obs.daily_key))
         with self.assertRaises(FeishuError):
             client.write_history('history', obs, [obs.original_url], [{'record_id': 'a', 'fields': fields}, {'record_id': 'b', 'fields': fields}])
         self.assertEqual(client.requests, [])
@@ -117,6 +119,16 @@ class FeishuTests(unittest.TestCase):
             self.assertEqual(request.call_args.kwargs, {})
             self.assertEqual(request.call_args.args[2]['view_id'], 'view1')
             self.assertEqual(request.call_args.args[3]['page_token'], 'next')
+
+    def test_history_does_not_require_work_or_account(self):
+        client = FakeFeishu()
+        obs = Observation('douyin', 'https://v.douyin.com/example/', source_record_id='rec1', values={'likes': 12})
+        rows = []
+        client.write_history('history', obs, [obs.original_url], rows)
+        self.assertEqual(rows[0]['fields']['来源记录ID'], 'rec1')
+        self.assertEqual(rows[0]['fields']['作品ID'], '')
+        self.assertEqual(rows[0]['fields']['账号'], '')
+        self.assertEqual(rows[0]['fields']['点赞数'], 12)
 
 
 class RunnerTests(unittest.TestCase):
@@ -142,6 +154,7 @@ class RunnerTests(unittest.TestCase):
         client.inspect = lambda: sources
         client.prepare_write = lambda: 'history'
         client.records = lambda *a: []
+        client.write_history = unittest.mock.Mock(return_value='history1')
         client.write_source = unittest.mock.Mock(side_effect=[FeishuError('写入失败'), None])
         with tempfile.TemporaryDirectory() as temp:
             with patch('koc_auto.runner.Feishu', return_value=client), patch('koc_auto.runner.BrowserCollector') as browser, patch('koc_auto.runner.capture_feishu', return_value=[]):

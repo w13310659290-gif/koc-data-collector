@@ -1,5 +1,7 @@
 """Read visible work controls only. Fail closed when layout is ambiguous."""
 import re
+import json
+import hashlib
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -22,14 +24,19 @@ EXTRACT = r'''platform => {
     ? chooseRoot(['.note-detail-mask .note-container', '.note-detail-mask', '#noteContainer', '.note-container'])
     : chooseRoot(['[data-e2e="video-detail"]', '[data-e2e="video-detail-container"]']);
   const scope = root || document;
+  // Comment rows also have like-wrapper; only the work bar has all three controls.
+  const workBars = root ? all(root, '.engage-bar, .interaction-container').filter(el =>
+    el.querySelector('.like-wrapper') && el.querySelector('.collect-wrapper') && el.querySelector('.chat-wrapper')) : [];
+  const barLeaves = workBars.filter(el => !workBars.some(other => other !== el && el.contains(other)));
+  const metricScope = platform === 'xiaohongshu' ? (barLeaves.length === 1 ? barLeaves[0] : null) : scope;
   const selectors = platform === 'xiaohongshu' ? {
-    likes: ['.interaction-container .like-wrapper .count', '.engage-bar .like-wrapper .count'],
-    favorites: ['.interaction-container .collect-wrapper .count', '.engage-bar .collect-wrapper .count'],
-    comments: ['.interaction-container .chat-wrapper .count', '.engage-bar .chat-wrapper .count'],
-    shares: ['.interaction-container .share-wrapper .count', '.engage-bar .share-wrapper .count']
+    likes: ['.like-wrapper .count'],
+    favorites: ['.collect-wrapper .count'],
+    comments: ['.chat-wrapper .count'],
+    shares: ['.share-wrapper .count']
   } : {
     likes: ['[data-e2e="video-player-digg"]', '[data-e2e="video-player-like"]'],
-    comments: ['[data-e2e="video-player-comment"]'],
+    comments: ['[data-e2e="video-player-comment"]', '[data-e2e="video-player-comments"]'],
     favorites: ['[data-e2e="video-player-collect"]', '[data-e2e="video-player-favorite"]'],
     shares: ['[data-e2e="video-player-share"]']
   };
@@ -39,8 +46,8 @@ EXTRACT = r'''platform => {
     const elements = new Set();
     for (const selector of candidates) {
       // XHS requires the open note modal; do not read feed cards.
-      if (platform === 'xiaohongshu' && !root) continue;
-      for (const el of all(scope, selector)) {
+      if (!metricScope) continue;
+      for (const el of all(metricScope, selector)) {
         const text = (el.innerText || '').trim();
         if (text && text.length <= 40) {
           elements.add(el);
@@ -49,14 +56,20 @@ EXTRACT = r'''platform => {
         }
       }
     }
-    if (found.size === 1 && elements.size === 1) raw[key] = [...found][0];
-    else if (elements.size > 1) notes.push(key + '存在多个可见控件，未采集');
+    const leaves = [...elements].filter(el => ![...elements].some(other => other !== el && el.contains(other)));
+    if (found.size === 1 && leaves.length === 1) raw[key] = [...found][0];
+    else if (leaves.length > 1) notes.push(key + '存在多个可见控件，未采集');
   }
   const authorSelectors = platform === 'xiaohongshu'
-    ? ['.author-container a[href*="/user/profile/"]', '.author a[href*="/user/profile/"]']
-    : ['[data-e2e="video-author-name"] a[href*="/user/"]', 'a[data-e2e="video-author-name"][href*="/user/"]', '[data-e2e="video-info"] a[href*="/user/"]'];
+    ? ['.author-container a[href*="/user/profile/"]', '.author a[href*="/user/profile/"]',
+       'a.author[href*="/user/profile/"]', 'a.author-container[href*="/user/profile/"]', '.author-wrapper a[href*="/user/profile/"]']
+    : ['[data-e2e="video-author-name"] a[href*="/user/"]', 'a[data-e2e="video-author-name"][href*="/user/"]',
+       '[data-e2e="video-info"] a[href*="/user/"]', '[data-e2e="video-author"] a[href*="/user/"]'];
   const authors = new Set();
-  for (const selector of authorSelectors) for (const el of all(scope, selector)) authors.add(el.href);
+  for (const selector of authorSelectors) for (const el of all(scope, selector)) {
+    const url = new URL(el.href);
+    authors.add(url.origin + url.pathname);
+  }
   const body = document.body.innerText || '';
   const automated = /访问过于频繁|操作过于频繁|异常访问|自动化访问|机器人访问|访问频率异常/.test(body);
   const verification = /请完成验证|请通过验证|拖动滑块|安全验证|验证码验证/.test(body);
@@ -65,6 +78,29 @@ EXTRACT = r'''platform => {
   return {raw, notes, evidence, author: authors.size === 1 ? [...authors][0] : null,
           automated, verification, unavailable, login,
           rootFound: !!root, hasMetrics: Object.keys(raw).length > 0};
+}'''
+
+# Narrow diagnostics: component attributes and numeric text, never cookies, inputs or full HTML.
+DIAGNOSTICS = r'''() => {
+  const visible = el => el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden';
+  const describe = el => ({tag: el.tagName, class: String(el.className?.baseVal ?? el.className ?? '').slice(0,250),
+    e2e: el.getAttribute('data-e2e'), role: el.getAttribute('role')});
+  const controls = [];
+  for (const el of document.querySelectorAll('[data-e2e], .interaction-container .count, .engage-bar .count, .author-container a, a.author, .author a')) {
+    if (!visible(el)) continue;
+    const marker = el.getAttribute('data-e2e') || '';
+    if (marker && !/video|like|digg|comment|collect|share|author/.test(marker)) continue;
+    const text = (el.innerText || '').trim();
+    const item = {node: describe(el), parents: [], numericText: /^[\d\s.,万亿wWkK]+$/.test(text) && text.length < 30 ? text : null};
+    let parent = el.parentElement;
+    for (let i=0; parent && i<3; i++, parent=parent.parentElement) item.parents.push(describe(parent));
+    if (el.tagName === 'A' && /\/user(?:\/profile)?\//.test(el.getAttribute('href') || '')) {
+      const url = new URL(el.href); item.publicAuthorPath = url.origin + url.pathname;
+    }
+    controls.push(item);
+    if (controls.length >= 200) break;
+  }
+  return {controls, truncated: controls.length >= 200};
 }'''
 
 
@@ -162,14 +198,18 @@ class BrowserCollector:
                     page.wait_for_timeout(2000)
                     identity = work_id(page.url, platform)
                 if not identity or platform_for_url(page.url) != platform:
-                    observation.outcome = '非作品链接'
-                    observation.notes.append('未跳转到可确认作品ID的作品页，需要核实或替换链接')
-                    return observation
+                    nonwork = re.search(r'/(?:user|shop|product|goods)(?:/|$)', urlsplit(page.url).path)
+                    visible_work = page.evaluate(EXTRACT, platform)
+                    if (nonwork or platform_for_url(page.url) != platform or
+                            not (visible_work['rootFound'] and visible_work['hasMetrics'])):
+                        observation.outcome = '非作品链接' if nonwork else '作品页面未确认'
+                        observation.notes.append('未确认当前作品页面结构，保留原值，不采集主页汇总数据')
+                        return observation
             if known and known != identity:
                 observation.notes.append('跳转后的作品ID与原链接不一致，未采集')
                 return observation
             observation.work_id = identity
-            cache_key = platform, identity
+            cache_key = platform, identity or url
             if cache_key in self.cache:
                 self.aliases[url] = cache_key
                 return self.cache[cache_key]
@@ -200,7 +240,26 @@ class BrowserCollector:
             if data['verification'] or (data['login'] and not data['hasMetrics']):
                 observation.outcome = '需要人工验证' if data['verification'] else '需要登录'
                 return observation
-            if work_id(page.url, platform) != identity:
+            # Dynamic controls may appear after the initial document load.
+            expected = ('likes', 'comments', 'favorites') if platform == 'xiaohongshu' else tuple(METRICS)
+            for _ in range(8):
+                if self.stop.is_set() or data['automated'] or data['verification'] or data['unavailable']:
+                    break
+                if all(count_value(data['raw'].get(key))[0] is not None for key in expected) and data['author']:
+                    break
+                page.wait_for_timeout(1000)
+                data = page.evaluate(EXTRACT, platform)
+            if self.stop.is_set():
+                observation.notes.append('用户已停止读取，未使用未核对数据')
+                return observation
+            if data['automated']:
+                self.blocked.add(platform)
+                observation.outcome = '访问受限'
+                return observation
+            if data['verification'] or data['unavailable']:
+                observation.outcome = '需要人工验证' if data['verification'] else '作品不可访问'
+                return observation
+            if (identity and work_id(page.url, platform) != identity) or platform_for_url(page.url) != platform:
                 observation.notes.append('读取前作品ID已变化，未采集')
                 return observation
             observation.account = profile_account(data['author'] or '', platform)
@@ -217,7 +276,10 @@ class BrowserCollector:
             if not confirmed:
                 observation.notes.append('未找到唯一且可见的作品互动控件，保留所有原值')
             self.report_dir.mkdir(parents=True, exist_ok=True)
-            screenshot = self.report_dir / (platform + '-' + identity + '.png')
+            file_key = identity or hashlib.sha256(url.encode()).hexdigest()[:20]
+            (self.report_dir / (platform + '-' + file_key + '-controls.json')).write_text(
+                json.dumps(page.evaluate(DIAGNOSTICS), ensure_ascii=False, indent=2), encoding='utf-8')
+            screenshot = self.report_dir / (platform + '-' + file_key + '.png')
             page.screenshot(path=str(screenshot), full_page=False)
             observation.screenshot = str(screenshot)
             self.cache[cache_key] = observation

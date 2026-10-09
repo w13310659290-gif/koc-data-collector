@@ -1,6 +1,6 @@
 import json
 import os
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import datetime
 from pathlib import Path
 
@@ -43,6 +43,8 @@ def run(app_id, secret, base_token, root, prompt, log, preview, stop):
                                               notes=['平台与链接域名不匹配或链接为空，未打开'])
                 else:
                     observation = browser.resolve(url, platform)
+                observation = replace(observation, source_record_id=source['record_id'], original_url=url,
+                                      values=dict(observation.values), notes=list(observation.notes))
                 results.append({'source': source, 'observation': observation, 'write': '未回填', 'history': '未回填'})
                 preview(source, observation)
         # Persist only results and source identifiers; no session, cookies, app secret, or tokens.
@@ -89,7 +91,7 @@ def run(app_id, secret, base_token, root, prompt, log, preview, stop):
                 continue
             observation = row['observation']
             if not observation.daily_key:
-                row['history'] = '未生成：作品ID或账号未确认'
+                row['history'] = '未生成：飞书来源记录ID未确认'
             try:
                 client.write_source(row['source'], observation)
                 row['write'] = '已保存并回读核对'

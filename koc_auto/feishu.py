@@ -11,7 +11,7 @@ API = 'https://open.feishu.cn/open-apis'
 TABLE = 'tbljlS0o2H7pigHf'
 VIEW = 'vew8YtuXG6'
 WIKI = 'GF0OwB4KWiLg5ekIuBxc6dJtnyc'
-HISTORY_FIELDS = {'平台': 1, '账号': 1, '作品ID': 1, '原始链接': 15,
+HISTORY_FIELDS = {'平台': 1, '来源记录ID': 1, '账号': 1, '作品ID': 1, '原始链接': 15,
                   '采集日期': 1, **{v: 2 for v in METRICS.values()}, '采集状态': 1, '采集时间': 5}
 
 
@@ -177,10 +177,11 @@ class Feishu:
             return None
         key = observation.daily_key
         matches = [row for row in history_records if tuple(source_text(row['fields'].get(k))
-                   for k in ('平台', '账号', '作品ID', '采集日期')) == key]
+                   for k in ('平台', '来源记录ID', '采集日期')) == key]
         if len(matches) > 1:
             raise FeishuError('每日数据表已有重复去重键，未覆盖任何历史行')
-        fields = dict(zip(('平台', '账号', '作品ID', '采集日期'), key))
+        fields = dict(zip(('平台', '来源记录ID', '采集日期'), key))
+        fields.update({'账号': observation.account or '', '作品ID': observation.work_id or ''})
         fields.update({'原始链接': {'link': links[0], 'text': links[0]},
                        '采集状态': observation.status + ('；同作品原始链接：' + ' | '.join(links) if len(links) > 1 else ''),
                        '采集时间': observation.timestamp})

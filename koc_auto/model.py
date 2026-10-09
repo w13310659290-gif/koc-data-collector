@@ -99,6 +99,7 @@ class Observation:
     outcome: str = '作品不可访问'
     screenshot: str | None = None
     captured_at: str = field(default_factory=lambda: datetime.now(BEIJING).isoformat())
+    source_record_id: str | None = None
 
     @property
     def status(self):
@@ -106,8 +107,6 @@ class Observation:
         details = list(self.notes)
         if missing and self.outcome in ('成功', '部分成功'):
             details.append('未显示或未确认：' + '、'.join(missing) + '；原值保留')
-        if not self.work_id or not self.account:
-            details.append('作品ID或账号未确认，不生成每日去重记录')
         return '；'.join([self.outcome, *dict.fromkeys(details)])
 
     @property
@@ -120,6 +119,6 @@ class Observation:
 
     @property
     def daily_key(self):
-        if not self.work_id or not self.account:
+        if not self.source_record_id:
             return None
-        return self.platform, self.account, self.work_id, self.date
+        return self.platform, self.source_record_id, self.date

@@ -56,6 +56,23 @@ class BrowserDOMTests(unittest.TestCase):
         data = self.page.evaluate(EXTRACT, 'xiaohongshu')
         self.assertEqual(data['raw'], {'likes': '130', 'comments': '6', 'favorites': '128'})
 
+    def test_comment_like_controls_do_not_conflict_with_note_bar(self):
+        self.page.set_content('''<div class="note-detail-mask"><div class="note-container">
+          <a class="author" href="https://www.xiaohongshu.com/user/profile/0123456789abcdef01234567?source=note">作者</a>
+          <div class="interaction-container"><div class="like-wrapper"><span class="count">500</span></div><div class="chat-wrapper"><span class="count">2</span></div></div>
+          <div class="interaction-container engage-bar"><div class="like-wrapper"><span class="count"><span class="count">130</span></span></div>
+          <div class="collect-wrapper"><span class="count">128</span></div><div class="chat-wrapper"><span class="count">6</span></div></div>
+        </div></div>''')
+        data = self.page.evaluate(EXTRACT, 'xiaohongshu')
+        self.assertEqual(data['raw'], {'likes': '130', 'comments': '6', 'favorites': '128'})
+        self.assertTrue(data['author'].endswith('0123456789abcdef01234567'))
+        self.assertNotIn('?', data['author'])
+
+    def test_separate_work_bars_remain_ambiguous(self):
+        bar = '<div class="engage-bar"><div class="like-wrapper"><span class="count">130</span></div><div class="collect-wrapper"><span class="count">128</span></div><div class="chat-wrapper"><span class="count">6</span></div></div>'
+        self.page.set_content('<div class="note-detail-mask">' + bar + bar + '</div>')
+        self.assertEqual(self.page.evaluate(EXTRACT, 'xiaohongshu')['raw'], {})
+
     def test_ambiguous_controls_fail_closed_even_same_values(self):
         self.page.set_content('<div data-e2e="video-player-digg">12</div><div data-e2e="video-player-digg">12</div>')
         data = self.page.evaluate(EXTRACT, 'douyin')
