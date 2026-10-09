@@ -83,6 +83,24 @@ class BrowserDOMTests(unittest.TestCase):
         self.page.set_content('<div data-e2e="video-player-digg" style="display:none">99</div><div class="recommendation">点赞 123</div>')
         self.assertEqual(self.page.evaluate(EXTRACT, 'douyin')['raw'], {})
 
+    def test_alternate_douyin_detail_controls_and_semantic_icons(self):
+        self.page.set_content('''<div data-e2e="video-detail"><div data-e2e="detail-video-info">
+          <div><svg><use href="#icon-like"></use></svg><span>568</span></div>
+          <div><svg><use href="#icon-collect"></use></svg><span>59</span></div>
+          <div data-e2e="video-share-icon-container">407</div>
+        </div><button role="tab">评论(25)</button>
+        <div data-e2e="comment-list"><div data-e2e="comment-item"><div><svg aria-label="点赞"></svg>999</div></div></div>
+        <div data-e2e="related-video"><div data-e2e="video-share-icon-container">9999</div></div></div>''')
+        data = self.page.evaluate(EXTRACT, 'douyin')
+        self.assertEqual(data['raw'], {'likes':'568','comments':'25','favorites':'59','shares':'407'})
+
+    def test_unknown_anonymous_icons_are_not_mapped_by_order(self):
+        self.page.set_content('''<div data-e2e="video-detail"><div data-e2e="detail-video-info">
+          <div><svg><use href="#anonymous"></use></svg>568</div>
+          <div><svg></svg>59</div><div data-e2e="video-share-icon-container">407</div>
+        </div></div>''')
+        self.assertEqual(self.page.evaluate(EXTRACT, 'douyin')['raw'], {'shares':'407'})
+
 
 if __name__ == '__main__':
     unittest.main()

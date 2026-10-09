@@ -38,7 +38,7 @@ EXTRACT = r'''platform => {
     likes: ['[data-e2e="video-player-digg"]', '[data-e2e="video-player-like"]'],
     comments: ['[data-e2e="video-player-comment"]', '[data-e2e="video-player-comments"]'],
     favorites: ['[data-e2e="video-player-collect"]', '[data-e2e="video-player-favorite"]'],
-    shares: ['[data-e2e="video-player-share"]']
+    shares: ['[data-e2e="video-player-share"]', '[data-e2e="detail-video-info"] [data-e2e="video-share-icon-container"]']
   };
   const raw = {}, notes = [], evidence = {};
   for (const [key, candidates] of Object.entries(selectors)) {
@@ -54,6 +54,31 @@ EXTRACT = r'''platform => {
           found.add(text);
           evidence[key] = selector;
         }
+      }
+    }
+    if (platform === 'douyin' && root) {
+      const labels = {likes:/like|digg|heart|点赞/i, comments:/comment|评论/i,
+        favorites:/collect|favorite|bookmark|收藏/i, shares:/share|转发|分享/i};
+      const currentInfo = all(root, '[data-e2e="detail-video-info"]');
+      // Semantic icon metadata, never the order or position of anonymous icons.
+      for (const info of currentInfo) for (const icon of all(info, 'svg, [aria-label], [title]')) {
+        if (icon.closest('[data-e2e="comment-item"], [data-e2e="comment-list"], [data-e2e="related-video"]')) continue;
+        const uses = [...icon.querySelectorAll('use')].map(use=>use.getAttribute('href') || use.getAttribute('xlink:href') || '').join(' ');
+        const marker = [icon.getAttribute('aria-label'),icon.getAttribute('title'),uses].filter(Boolean).join(' ');
+        const matched = Object.keys(labels).filter(metric=>labels[metric].test(marker));
+        if (matched.length !== 1 || matched[0] !== key) continue;
+        let el = icon;
+        for (let depth=0; el && el!==info && depth<4; depth++,el=el.parentElement) {
+          const text = (el.innerText || '').trim();
+          if (/^\d[\d.,]*(?:\s*[万亿wWkK])?$/.test(text) && text.length<=30) {
+            found.add(text); elements.add(el); evidence[key] = '当前作品图标标识：'+marker; break;
+          }
+        }
+      }
+      if (key === 'comments') for (const el of all(root, '[role="tab"], button, [class*="tab"], [data-e2e*="comment"]')) {
+        if (el.closest('[data-e2e="comment-item"], [data-e2e="comment-list"], [data-e2e="related-video"]')) continue;
+        const match = (el.innerText || '').trim().match(/^评论\s*[（(]\s*(\d[\d.,]*(?:\s*[万亿wWkK])?)\s*[）)]$/);
+        if (match) {found.add(match[1]); elements.add(el); evidence[key]='当前作品评论总数标签';}
       }
     }
     const leaves = [...elements].filter(el => ![...elements].some(other => other !== el && el.contains(other)));
@@ -100,7 +125,21 @@ DIAGNOSTICS = r'''() => {
     controls.push(item);
     if (controls.length >= 200) break;
   }
-  return {controls, truncated: controls.length >= 200};
+  const icons = [];
+  const info = [...document.querySelectorAll('[data-e2e="detail-video-info"]')].filter(visible);
+  for (const root of info) for (const el of root.querySelectorAll('svg,[aria-label],[title]')) {
+    if (!visible(el) || el.closest('[data-e2e="comment-item"], [data-e2e="related-video"]')) continue;
+    const uses = [...el.querySelectorAll('use')].map(use => use.getAttribute('href') || use.getAttribute('xlink:href') || '').filter(value=>value.startsWith('#'));
+    const item = {node:describe(el),uses,aria:el.getAttribute('aria-label'),title:el.getAttribute('title'),parents:[]};
+    let parent = el.parentElement;
+    for (let depth=0; parent && parent!==root && depth<3; depth++,parent=parent.parentElement) {
+      const text=(parent.innerText || '').trim();
+      item.parents.push({...describe(parent),numericText:/^[\d\s.,万亿wWkK]+$/.test(text)&&text.length<30?text:null});
+    }
+    icons.push(item);
+    if (icons.length>=50) break;
+  }
+  return {controls, icons, truncated: controls.length >= 200 || icons.length>=50};
 }'''
 
 
