@@ -101,6 +101,21 @@ class BrowserDOMTests(unittest.TestCase):
         </div></div>''')
         self.assertEqual(self.page.evaluate(EXTRACT, 'douyin')['raw'], {'shares':'407'})
 
+    def test_observed_feed_comment_icon_is_scoped_to_current_note(self):
+        self.page.set_content('''<main data-e2e="note-detail"><div data-e2e="video-player-digg">1109</div>
+        <div data-e2e="feed-comment-icon">84</div><div data-e2e="video-player-collect">14</div>
+        <div data-e2e="video-player-share">71</div><div data-e2e="related-video"><div data-e2e="feed-comment-icon">9999</div></div></main>''')
+        self.assertEqual(self.page.evaluate(EXTRACT,'douyin')['raw'],{'likes':'1109','comments':'84','favorites':'14','shares':'71'})
+
+    def test_shape_candidates_keep_geometry_without_assigning_meanings(self):
+        self.page.set_content('''<div data-e2e="video-detail"><div data-e2e="detail-video-info"><div><div><div>
+          <svg viewBox="0 0 24 24"><path d="M 0 0 L 1 1 Z"></path></svg></div></div><span>568</span></div></div></div>''')
+        data=self.page.evaluate(EXTRACT,'douyin')
+        self.assertEqual(data['raw'],{})
+        self.assertEqual(len(data['iconCandidates']),1)
+        self.assertEqual(data['iconCandidates'][0]['text'],'568')
+        self.assertIn('M 0 0 L 1 1 Z',data['iconCandidates'][0]['signature'])
+
 
 if __name__ == '__main__':
     unittest.main()

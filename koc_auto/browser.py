@@ -22,7 +22,7 @@ EXTRACT = r'''platform => {
   };
   const root = platform === 'xiaohongshu'
     ? chooseRoot(['.note-detail-mask .note-container', '.note-detail-mask', '#noteContainer', '.note-container'])
-    : chooseRoot(['[data-e2e="video-detail"]', '[data-e2e="video-detail-container"]']);
+    : chooseRoot(['[data-e2e="video-detail"]', '[data-e2e="video-detail-container"]', '[data-e2e="note-detail"]']);
   const scope = root || document;
   // Comment rows also have like-wrapper; only the work bar has all three controls.
   const workBars = root ? all(root, '.engage-bar, .interaction-container').filter(el =>
@@ -36,7 +36,7 @@ EXTRACT = r'''platform => {
     shares: ['.share-wrapper .count']
   } : {
     likes: ['[data-e2e="video-player-digg"]', '[data-e2e="video-player-like"]'],
-    comments: ['[data-e2e="video-player-comment"]', '[data-e2e="video-player-comments"]'],
+    comments: ['[data-e2e="video-player-comment"]', '[data-e2e="video-player-comments"]', '[data-e2e="feed-comment-icon"]'],
     favorites: ['[data-e2e="video-player-collect"]', '[data-e2e="video-player-favorite"]'],
     shares: ['[data-e2e="video-player-share"]', '[data-e2e="detail-video-info"] [data-e2e="video-share-icon-container"]']
   };
@@ -48,6 +48,7 @@ EXTRACT = r'''platform => {
       // XHS requires the open note modal; do not read feed cards.
       if (!metricScope) continue;
       for (const el of all(metricScope, selector)) {
+        if (el.closest('[data-e2e="comment-item"], [data-e2e="comment-list"], [data-e2e="related-video"]')) continue;
         const text = (el.innerText || '').trim();
         if (text && text.length <= 40) {
           elements.add(el);
@@ -100,10 +101,71 @@ EXTRACT = r'''platform => {
   const verification = /请完成验证|请通过验证|拖动滑块|安全验证|验证码验证/.test(body);
   const unavailable = /作品已删除|笔记已删除|内容已删除|笔记不存在|作品不存在|该内容无法展示|该笔记暂时无法浏览/.test(body);
   const login = /登录后查看|登录后可查看|请登录后|登录后继续|扫码登录/.test(body);
+  const iconCandidates = [];
+  const usedContainers = new Set();
+  document.querySelectorAll('[data-koc-icon-candidate]').forEach(el=>el.removeAttribute('data-koc-icon-candidate'));
+  if (platform === 'douyin' && root) for (const info of all(root,'[data-e2e="detail-video-info"]')) {
+    for (const svg of all(info,'svg')) {
+      if (svg.closest('[data-e2e="comment-item"],[data-e2e="comment-list"],[data-e2e="related-video"]')) continue;
+      const geometry=[...svg.querySelectorAll('path,polygon,polyline,circle,rect,ellipse,line')].map(shape=>
+        [shape.tagName,...['d','points','cx','cy','r','x','y','width','height','rx','ry','x1','x2','y1','y2','transform'].map(attr=>shape.getAttribute(attr))]);
+      if (!geometry.length) continue;
+      const signature=JSON.stringify([svg.getAttribute('viewBox'),geometry]);
+      let control=svg;
+      for(let depth=0;control&&control!==info&&depth<4;depth++,control=control.parentElement) {
+        const text=(control.innerText||'').trim();
+        if (/^\d[\d.,]*(?:\s*[万亿wWkK])?$/.test(text)&&text.length<=30) {
+          if(!usedContainers.has(control)) {
+            usedContainers.add(control);
+            iconCandidates.push({signature,text});
+            control.setAttribute('data-koc-icon-candidate',String(iconCandidates.length));
+          }
+          break;
+        }
+      }
+    }
+  }
   return {raw, notes, evidence, author: authors.size === 1 ? [...authors][0] : null,
           automated, verification, unavailable, login,
-          rootFound: !!root, hasMetrics: Object.keys(raw).length > 0};
+          iconCandidates, rootFound: !!root, hasMetrics: Object.keys(raw).length > 0};
 }'''
+
+HIGHLIGHT_ICONS = r'''() => {
+  document.querySelectorAll('[data-koc-overlay]').forEach(el=>el.remove());
+  for(const el of document.querySelectorAll('[data-koc-icon-candidate]')) {
+    const rect=el.getBoundingClientRect();
+    if(!rect.width||!rect.height) continue;
+    const box=document.createElement('div');
+    box.setAttribute('data-koc-overlay','');
+    box.style.cssText=`position:fixed;left:${rect.left}px;top:${rect.top}px;width:${rect.width}px;height:${rect.height}px;outline:3px solid #ff3333;pointer-events:none;z-index:2147483647;`;
+    const label=document.createElement('span');
+    label.textContent='编号 '+el.getAttribute('data-koc-icon-candidate');
+    label.style.cssText='position:absolute;top:-22px;left:0;background:#ff3333;color:white;font:14px sans-serif;white-space:nowrap;padding:2px 4px;';
+    box.appendChild(label);document.body.appendChild(box);
+  }
+}'''
+
+
+def apply_icon_mapping(data, mapping):
+    """Only exact shapes explicitly mapped by the user may fill missing metrics."""
+    matches = {}
+    for candidate in data.get('iconCandidates', []):
+        metric = mapping.get(candidate['signature'])
+        if metric in METRICS:
+            matches.setdefault(metric, []).append(candidate['text'])
+    for metric, texts in matches.items():
+        if len(texts) != 1:
+            data['raw'].pop(metric, None)
+            data['notes'].append(METRICS[metric] + '存在多个已标注图标，未采集')
+            continue
+        existing = data['raw'].get(metric)
+        if existing is not None and count_value(existing)[0] != count_value(texts[0])[0]:
+            data['raw'].pop(metric, None)
+            data['notes'].append(METRICS[metric] + '图标结果与现有控件结果不一致，未采集')
+        else:
+            data['raw'][metric] = texts[0]
+    data['hasMetrics'] = bool(data['raw'])
+    return data
 
 # Narrow diagnostics: component attributes and numeric text, never cookies, inputs or full HTML.
 DIAGNOSTICS = r'''() => {
@@ -144,7 +206,7 @@ DIAGNOSTICS = r'''() => {
 
 
 class BrowserCollector:
-    def __init__(self, profile, report_dir, prompt, log, stop):
+    def __init__(self, profile, report_dir, prompt, log, stop, calibrate=None):
         self.profile = Path(profile)
         self.report_dir = Path(report_dir)
         self.prompt = prompt
@@ -155,6 +217,16 @@ class BrowserCollector:
         self.aliases = {}
         self.login_prepared = set()
         self.login_skipped = set()
+        self.calibrate = calibrate
+        self.icon_map = {}
+        self.calibration_tried = set()
+        self.icon_map_path = self.profile.parent / '.data' / 'douyin-icon-map.json'
+        try:
+            saved = json.loads(self.icon_map_path.read_text(encoding='utf-8'))
+            if isinstance(saved, dict):
+                self.icon_map = {key:value for key,value in saved.items() if isinstance(key,str) and value in METRICS}
+        except (OSError, ValueError):
+            pass
 
     def __enter__(self):
         from playwright.sync_api import sync_playwright
@@ -301,6 +373,43 @@ class BrowserCollector:
             if (identity and work_id(page.url, platform) != identity) or platform_for_url(page.url) != platform:
                 observation.notes.append('读取前作品ID已变化，未采集')
                 return observation
+            if platform == 'douyin':
+                data = apply_icon_mapping(data, self.icon_map)
+                candidates = data.get('iconCandidates', [])
+                new_shapes = {c['signature'] for c in candidates if c['signature'] not in self.icon_map}
+                if (self.calibrate and any(data['raw'].get(k) is None for k in METRICS)
+                        and new_shapes - self.calibration_tried):
+                    self.calibration_tried.update(new_shapes)
+                    page.bring_to_front()
+                    page.evaluate(HIGHLIGHT_ICONS)
+                    try:
+                        selected = self.calibrate([c['text'] for c in candidates])
+                    finally:
+                        page.evaluate("() => document.querySelectorAll('[data-koc-overlay]').forEach(el=>el.remove())")
+                    if selected:
+                        proposed = {}
+                        for metric,index in selected.items():
+                            if index:
+                                signature = candidates[index-1]['signature']
+                                if signature in proposed and proposed[signature] != metric:
+                                    raise RuntimeError('不同指标的图形标识相同，未保存标注，请跳过此布局')
+                                proposed[signature] = metric
+                        for signature,metric in proposed.items():
+                            if signature in self.icon_map and self.icon_map[signature] != metric:
+                                raise RuntimeError('图标标注与以前确认的结果冲突，未覆盖')
+                        self.icon_map.update(proposed)
+                        self.icon_map_path.parent.mkdir(parents=True, exist_ok=True)
+                        self.icon_map_path.write_text(json.dumps(self.icon_map,ensure_ascii=False,indent=2),encoding='utf-8')
+                        data = apply_icon_mapping(page.evaluate(EXTRACT, platform), self.icon_map)
+                        self.log('已保存你确认的图形标识；后续仅对完全相同的图形复用。')
+                if (identity and work_id(page.url, platform) != identity) or platform_for_url(page.url) != platform:
+                    observation.notes.append('图标确认期间作品页面已变化，未采集')
+                    return observation
+                if data['automated'] or data['verification'] or data['unavailable']:
+                    if data['automated']:
+                        self.blocked.add(platform)
+                    observation.outcome = '访问受限' if data['automated'] else '需要人工验证' if data['verification'] else '作品不可访问'
+                    return observation
             observation.account = profile_account(data['author'] or '', platform)
             observation.captured_at = datetime.now(BEIJING).isoformat()
             observation.notes.extend(data['notes'])

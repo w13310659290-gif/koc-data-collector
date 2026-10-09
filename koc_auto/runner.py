@@ -9,7 +9,7 @@ from .feishu import Feishu, FeishuError, TABLE
 from .model import BEIJING, METRICS, PLATFORMS, Observation, platform_for_url, source_link, source_text
 
 
-def run(app_id, secret, base_token, root, prompt, log, preview, stop):
+def run(app_id, secret, base_token, root, prompt, log, preview, stop, calibrate=None):
     root = Path(root)
     lock = root / '.collector.lock'
     try:
@@ -29,7 +29,7 @@ def run(app_id, secret, base_token, root, prompt, log, preview, stop):
         report_dir = root / 'reports' / datetime.now(BEIJING).strftime('%Y%m%d-%H%M%S-%f')
         report_dir.mkdir(parents=True)
         results = []
-        with BrowserCollector(root / '.local-browser', report_dir, prompt, log, stop) as browser:
+        with BrowserCollector(root / '.local-browser', report_dir, prompt, log, stop, calibrate=calibrate) as browser:
             for index, source in enumerate(sources, 1):
                 if stop.is_set():
                     raise RuntimeError('已停止运行；尚未回填。')

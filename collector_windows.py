@@ -4,7 +4,7 @@ import queue
 import threading
 import tkinter as tk
 from pathlib import Path
-from tkinter import messagebox, ttk
+from tkinter import messagebox, simpledialog, ttk
 
 from koc_auto.model import METRICS
 from koc_auto.runner import run
@@ -69,6 +69,15 @@ class App:
         self.events.put(('preview', (source['record_id'], observation.platform,
                                     *[observation.values.get(k) if observation.values.get(k) is not None else '—' for k in METRICS], observation.status)))
 
+    def calibrate(self, counts):
+        signal = threading.Event()
+        reply = []
+        self.events.put(('calibrate', (counts, signal, reply)))
+        while not signal.wait(.2):
+            if self.stop.is_set():
+                return None
+        return reply[0] if reply and not self.stop.is_set() else None
+
     def start(self):
         if self.running:
             return
@@ -84,7 +93,7 @@ class App:
         self.table.delete(*self.table.get_children())
         def worker():
             try:
-                run(**values, root=ROOT, prompt=self.ask, log=self.log, preview=self.preview, stop=self.stop)
+                run(**values, root=ROOT, prompt=self.ask, log=self.log, preview=self.preview, stop=self.stop, calibrate=self.calibrate)
             except Exception as error:
                 from koc_auto.feishu import FeishuError
                 self.log(str(error) if isinstance(error, (FeishuError, RuntimeError)) else '运行异常，请检查网络和本地环境；未自动重试写入。')
@@ -119,6 +128,28 @@ class App:
                 for entry in self.entries.values():
                     entry.state(['!disabled'])
                 self.entries['secret'].delete(0, 'end')
+            elif kind == 'calibrate':
+                counts, signal, reply = data
+                result = None
+                while not self.stop.is_set():
+                    answer = simpledialog.askstring('确认抖音作品图标（相同图形只需一次）',
+                        '请看 Edge 中红框编号对应的实际图标，不要点击作品按钮。\n'
+                        '按“点赞、评论、收藏、转发”的顺序填写4个编号，用逗号分隔。\n'
+                        '不知道某项填0；点取消则跳过标注。不要只按排列顺序猜。\n'
+                        '对应数字：' + '，'.join(f'{i+1}号={count}' for i,count in enumerate(counts)), parent=self.window)
+                    if answer is None:
+                        break
+                    try:
+                        indices = [int(part.strip()) for part in answer.replace('，',',').split(',')]
+                        nonzero = [i for i in indices if i]
+                        if len(indices)!=4 or any(i<0 or i>len(counts) for i in indices) or len(set(nonzero))!=len(nonzero):
+                            raise ValueError()
+                        result = dict(zip(METRICS,indices))
+                        break
+                    except ValueError:
+                        messagebox.showinfo('编号格式不正确','请填写4个编号；不同指标不能使用同一个编号。不知道填0。',parent=self.window)
+                reply.append(result)
+                signal.set()
         self.window.after(100, self.poll)
 
     def cancel(self):
