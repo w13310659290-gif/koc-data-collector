@@ -38,6 +38,26 @@ class LoginTests(unittest.TestCase):
         instance.prompt.assert_not_called()
         self.assertNotIn('xiaohongshu', instance.login_prepared)
 
+    def test_douyin_login_once_and_platforms_are_independent(self):
+        instance = self.collector(True)
+        self.assertTrue(instance.prepare_douyin_login())
+        self.assertTrue(instance.prepare_douyin_login())
+        instance.context.new_page.return_value.goto.assert_called_once_with(
+            'https://www.douyin.com/', wait_until='domcontentloaded', timeout=30000)
+        self.assertTrue(instance.prepare_xhs_login())
+        self.assertEqual(instance.prompt.call_count, 2)
+        self.assertEqual(instance.login_prepared, {'douyin', 'xiaohongshu'})
+
+    def test_cancel_douyin_skips_works_but_not_xhs_login(self):
+        instance = self.collector(False)
+        for url in ('https://www.douyin.com/video/123', 'https://v.douyin.com/example'):
+            obs = instance.resolve(url, 'douyin')
+            self.assertEqual(obs.outcome, '需要登录')
+            self.assertTrue(all(v is None for v in obs.values.values()))
+        instance.context.new_page.assert_called_once()
+        instance.prompt.return_value = True
+        self.assertTrue(instance.prepare_xhs_login())
+
 
 if __name__ == '__main__':
     unittest.main()
